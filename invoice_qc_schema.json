@@ -1,0 +1,27 @@
+{
+  "invoice_id": "INV-2024-001234",
+  "invoice_number": "INV-2024-001234",
+  "invoice_date": "2024-03-15",
+  "due_date": "2024-04-14",
+  "supplier_name": "Acme Corp",
+  "supplier_address": "123 Business St, City, State 12345",
+  "supplier_tax_id": "12-3456789",
+  "buyer_name": "Tech Industries Ltd",
+  "buyer_address": "456 Corporate Ave, City, State 67890",
+  "buyer_tax_id": "98-7654321",
+  "currency": "USD",
+  "subtotal": 15000.00,
+  "tax_amount": 1200.00,
+  "total_amount": 16200.00,
+  "payment_terms": "Net 30",
+  "line_items": [
+    {
+      "item_code": "SKU-001",
+      "description": "Professional Services",
+      "quantity": 100,
+      "unit_price": 150.00,
+      "line_total": 15000.00
+    }
+  ]
+}
+
