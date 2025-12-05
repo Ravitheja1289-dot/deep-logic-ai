@@ -10,6 +10,12 @@ from pathlib import Path
 from typing import Optional, Dict, List, Any
 
 import pdfplumber
+import logging
+
+from invoice_qc import regex_patterns
+from invoice_qc.utils import normalize_invoice
+
+logger = logging.getLogger(__name__)
 
 
 def extract_text_from_pdf(path: str) -> str:
@@ -59,23 +65,30 @@ def _normalize_amount(text: str) -> Optional[float]:
 def _extract_invoice_number(text: str) -> Optional[str]:
     """Extract invoice number using common patterns."""
     patterns = [
-        r'(?:invoice|inv)[\s#:]*([A-Z0-9\-]+)',
-        r'invoice\s+number[\s:]+([A-Z0-9\-]+)',
-        r'inv[\s#:]*([A-Z0-9\-]+)',
+        r'(?:invoice|inv)[\s#:]*([A-Z0-9\-/]+)',
+        r'invoice\s+number[\s:]+([A-Z0-9\-/]+)',
+        r'inv[\s#:]*([A-Z0-9\-/]+)',
+        r'#\s*([A-Z0-9\-/]+)',  # Just "#12345"
+        r'invoice\s*#\s*([A-Z0-9\-/]+)',
+        r'no\.?\s*[:]?\s*([A-Z0-9\-/]+)',  # "No. 12345" or "No: 12345"
     ]
     
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
-            return match.group(1).strip()
+            inv_num = match.group(1).strip()
+            if len(inv_num) > 0:
+                return inv_num
     return None
 
 
 def _extract_date(text: str, label: str) -> Optional[str]:
     """Extract date field (invoice_date or due_date) using common patterns."""
     patterns = [
-        rf'{label}[\s:]+(\d{{1,2}}[/\-]\d{{1,2}}[/\-]\d{{2,4}})',
-        rf'{label}[\s:]+(\d{{4}}[/\-]\d{{1,2}}[/\-]\d{{1,2}})',
+        rf'{label}[\s:]+(\d{{1,2}}[/\-\.]\d{{1,2}}[/\-\.]\d{{2,4}})',
+        rf'{label}[\s:]+(\d{{4}}[/\-\.]\d{{1,2}}[/\-\.]\d{{1,2}})',
+        rf'{label}[\s:]+(\d{{1,2}}\s+\w{{3}}\s+\d{{4}})',  # "15 Mar 2024"
+        rf'{label}[\s:]+(\w{{3}}\s+\d{{1,2}},\s+\d{{4}})',  # "Mar 15, 2024"
     ]
     
     for pattern in patterns:
@@ -83,26 +96,64 @@ def _extract_date(text: str, label: str) -> Optional[str]:
         if match:
             date_str = match.group(1)
             # Normalize to YYYY-MM-DD format if possible
-            return _normalize_date(date_str)
+            normalized = _normalize_date(date_str)
+            if normalized:
+                return normalized
     return None
 
 
 def _normalize_date(date_str: str) -> Optional[str]:
     """Normalize date string to YYYY-MM-DD format."""
-    # Try MM/DD/YYYY or YYYY-MM-DD patterns
-    patterns = [
-        (r'(\d{4})[/\-](\d{1,2})[/\-](\d{1,2})', lambda m: f"{m.group(1)}-{m.group(2).zfill(2)}-{m.group(3).zfill(2)}"),
-        (r'(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})', lambda m: _normalize_short_date(m)),
+    if not date_str:
+        return None
+    
+    from datetime import datetime
+    
+    # Try common date formats
+    formats = [
+        '%Y-%m-%d',      # 2024-03-15
+        '%m/%d/%Y',      # 03/15/2024
+        '%d/%m/%Y',      # 15/03/2024
+        '%Y/%m/%d',      # 2024/03/15
+        '%m-%d-%Y',      # 03-15-2024
+        '%d-%m-%Y',      # 15-03-2024
+        '%m/%d/%y',      # 03/15/24
+        '%d/%m/%y',      # 15/03/24
     ]
     
-    for pattern, formatter in patterns:
-        match = re.match(pattern, date_str)
-        if match:
-            try:
-                return formatter(match)
-            except:
-                continue
-    return date_str  # Return as-is if normalization fails
+    for fmt in formats:
+        try:
+            dt = datetime.strptime(date_str, fmt)
+            return dt.strftime('%Y-%m-%d')
+        except ValueError:
+            continue
+    
+    # If no format matches, try to parse with regex and guess format
+    parts = re.split(r'[/\-]', date_str)
+    if len(parts) == 3:
+        try:
+            # Try YYYY-MM-DD first
+            if len(parts[0]) == 4:
+                year, month, day = parts[0], parts[1], parts[2]
+                dt = datetime(int(year), int(month), int(day))
+                return dt.strftime('%Y-%m-%d')
+            # Try MM/DD/YYYY (US format)
+            elif len(parts[2]) == 4:
+                month, day, year = parts[0], parts[1], parts[2]
+                dt = datetime(int(year), int(month), int(day))
+                return dt.strftime('%Y-%m-%d')
+            # Try DD/MM/YYYY (European format)
+            elif len(parts[0]) <= 2 and len(parts[1]) <= 2:
+                day, month, year = parts[0], parts[1], parts[2]
+                if len(year) == 2:
+                    year = f"20{year}" if int(year) < 50 else f"19{year}"
+                dt = datetime(int(year), int(month), int(day))
+                return dt.strftime('%Y-%m-%d')
+        except (ValueError, IndexError):
+            pass
+    
+    # Return as-is if we can't normalize (validator will catch invalid format)
+    return date_str
 
 
 def _normalize_short_date(match) -> str:
@@ -116,16 +167,22 @@ def _normalize_short_date(match) -> str:
 def _extract_name(text: str, label: str) -> Optional[str]:
     """Extract seller or buyer name using common patterns."""
     patterns = [
-        rf'{label}[\s:]+([A-Z][A-Za-z\s&.,]+?)(?:\n|$)',
-        rf'{label}[\s:]+([A-Z][A-Za-z\s&.,]+?)(?:\n|invoice|total|amount)',
+        rf'{label}[\s:]+([A-Z][A-Za-z0-9\s&.,\-()]+?)(?:\n|$)',
+        rf'{label}[\s:]+([A-Z][A-Za-z0-9\s&.,\-()]+?)(?:\n|invoice|total|amount|date|from|to|seller|buyer)',
+        rf'{label}[\s:]+([A-Z][A-Za-z0-9\s&.,\-()]+?)(?:\n\n|\n[A-Z])',  # Stop at next capitalized line or double newline
     ]
     
     for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+        match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE | re.DOTALL)
         if match:
             name = match.group(1).strip()
             # Clean up common artifacts
             name = re.sub(r'\s+', ' ', name)
+            # Remove trailing punctuation
+            name = re.sub(r'\s*[,;]\s*$', '', name)
+            # Remove newlines and extra spaces
+            name = name.replace('\n', ' ').replace('\r', ' ')
+            name = re.sub(r'\s+', ' ', name).strip()
             if len(name) > 2 and len(name) < 200:
                 return name
     return None
@@ -234,20 +291,47 @@ def extract_invoice(path: str) -> Dict[str, Any]:
     raw_text = extract_text_from_pdf(path)
     source_file = str(Path(path).name)
     
-    invoice_data = {
-        'invoice_number': _extract_invoice_number(raw_text),
-        'invoice_date': _extract_date(raw_text, 'invoice date'),
-        'due_date': _extract_date(raw_text, 'due date'),
-        'seller_name': _extract_name(raw_text, 'seller') or _extract_name(raw_text, 'from') or _extract_name(raw_text, 'supplier'),
-        'buyer_name': _extract_name(raw_text, 'buyer') or _extract_name(raw_text, 'to') or _extract_name(raw_text, 'bill to'),
-        'currency': _extract_currency(raw_text),
-        'net_total': _extract_amount(raw_text, 'subtotal') or _extract_amount(raw_text, 'net total') or _extract_amount(raw_text, 'total before tax'),
-        'tax_amount': _extract_amount(raw_text, 'tax') or _extract_amount(raw_text, 'vat') or _extract_amount(raw_text, 'gst'),
-        'gross_total': _extract_amount(raw_text, 'total') or _extract_amount(raw_text, 'grand total') or _extract_amount(raw_text, 'amount due'),
-        'line_items': _extract_line_items(path),
-        'raw_text': raw_text,
-        'source_file': source_file,
-    }
+    # Log if text extraction failed or returned empty
+    if not raw_text or len(raw_text.strip()) < 10:
+        logger.warning(f"PDF text extraction returned very little or no text for {source_file}. This might be a scanned/image-based PDF.")
     
-    return invoice_data
+    # Use consolidated regex patterns when possible
+    try:
+        fields = regex_patterns.extract_all_fields(raw_text)
+        # If regex_patterns didn't extract names, try fallback
+        if not fields.get('seller_name'):
+            fields['seller_name'] = _extract_name(raw_text, 'seller') or _extract_name(raw_text, 'from') or _extract_name(raw_text, 'supplier') or _extract_name(raw_text, 'vendor')
+        if not fields.get('buyer_name'):
+            fields['buyer_name'] = _extract_name(raw_text, 'buyer') or _extract_name(raw_text, 'to') or _extract_name(raw_text, 'bill to') or _extract_name(raw_text, 'customer')
+        
+        # Log missing critical fields
+        missing_fields = []
+        if not fields.get('invoice_number'):
+            missing_fields.append('invoice_number')
+        if not fields.get('invoice_date'):
+            missing_fields.append('invoice_date')
+        if not fields.get('seller_name'):
+            missing_fields.append('seller_name')
+        if missing_fields:
+            logger.debug(f"Missing fields for {source_file}: {missing_fields}. Raw text preview: {raw_text[:200]}")
+    except Exception:
+        logger.exception("Error extracting fields with regex_patterns; falling back to local heuristics")
+        fields = {
+            'invoice_number': _extract_invoice_number(raw_text),
+            'invoice_date': _extract_date(raw_text, 'invoice date'),
+            'due_date': _extract_date(raw_text, 'due date'),
+            'currency': _extract_currency(raw_text),
+            'net_total': _extract_amount(raw_text, 'subtotal') or _extract_amount(raw_text, 'net total') or _extract_amount(raw_text, 'total before tax'),
+            'tax_amount': _extract_amount(raw_text, 'tax') or _extract_amount(raw_text, 'vat') or _extract_amount(raw_text, 'gst'),
+            'gross_total': _extract_amount(raw_text, 'total') or _extract_amount(raw_text, 'grand total') or _extract_amount(raw_text, 'amount due'),
+            'seller_name': _extract_name(raw_text, 'seller') or _extract_name(raw_text, 'from') or _extract_name(raw_text, 'supplier') or _extract_name(raw_text, 'vendor'),
+            'buyer_name': _extract_name(raw_text, 'buyer') or _extract_name(raw_text, 'to') or _extract_name(raw_text, 'bill to') or _extract_name(raw_text, 'customer'),
+        }
+    fields['line_items'] = _extract_line_items(path)
+    fields['raw_text'] = raw_text
+    fields['source_file'] = source_file
+
+    # Normalize to canonical schema expected by validator
+    normalized = normalize_invoice(fields)
+    return normalized
 
