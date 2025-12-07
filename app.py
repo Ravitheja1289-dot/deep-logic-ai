@@ -3,10 +3,12 @@ import requests
 import io
 import json
 import html
+import os
 from typing import List, Dict, Any
 
 # Default API URL (change in sidebar if your backend is hosted elsewhere)
-DEFAULT_API_URL = "http://localhost:8000"
+# You can also set an env var STREAMLIT_API_URL in deployment to override.
+DEFAULT_API_URL = os.getenv("STREAMLIT_API_URL", "http://localhost:8000")
 
 
 def send_files_to_api(files: List[st.runtime.uploaded_file_manager.UploadedFile], api_url: str, timeout: int = 60) -> Dict[str, Any]:
@@ -147,8 +149,26 @@ def main():
 
     # Sidebar: API configuration
     st.sidebar.header("Backend")
-    api_url = st.sidebar.text_input("API base URL", value=DEFAULT_API_URL)
+    api_url = st.sidebar.text_input(
+        "API base URL",
+        value=DEFAULT_API_URL,
+        help="For deployed Streamlit, set this to your public FastAPI URL (not localhost).",
+    )
     st.sidebar.write("Endpoint used: ", f"`{api_url.rstrip('/')}/extract-and-validate-pdfs`")
+    if "localhost" in api_url:
+        st.sidebar.warning(
+            "Deployed Streamlit cannot reach localhost. Set this to your public FastAPI URL.",
+            icon="⚠️",
+        )
+
+    # Quick health check
+    if st.sidebar.button("Check API health"):
+        try:
+            resp = requests.get(api_url.rstrip("/") + "/health", timeout=10)
+            resp.raise_for_status()
+            st.sidebar.success(f"API OK: {resp.json()}")
+        except Exception as e:
+            st.sidebar.error(f"API health check failed: {e}")
     st.sidebar.markdown("---")
     st.sidebar.write("Usage:")
     st.sidebar.markdown("1. Upload PDF invoices\n2. Click **Extract & Validate**\n3. Review results")

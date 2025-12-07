@@ -178,6 +178,14 @@ The AI initially suggested using `re.match()` for date extraction, which only ma
 - Line item extraction relies on pdfplumber table detection quality
 - Duplicate detection requires supplier_tax_id for reliable matching
 
+## Integration with Larger Systems
+ 
+This service is designed to be a composable part of a larger document processing pipeline.
+ 
+- **API Integration**: Downstream systems (e.g., an ERP or AP automation platform) can call the `POST /validate-json` endpoint to validate invoice data extracted by other OCR tools. Alternatively, the `POST /extract-and-validate-pdfs` endpoint can be used as a self-contained extraction service.
+- **Event-Driven Architecture**: The CLI can be triggered by file system watchers or cron jobs. For a more robust setup, you could wrap the CLI or API calls in a worker (e.g., Celery, temporal.io) that consumes messages from a queue (SQS, RabbitMQ) whenever a new invoice is uploaded to S3.
+- **Containerization**: The application is stateless and can be easily containerized (Docker) and deployed to Kubernetes or serverless containers (AWS Fargate, Google Cloud Run). Health checks (`/health`) are ready for orchestrator liveness probes.
+ 
 ## Video Demo
 
 [Google Drive Link - Placeholder](https://drive.google.com/your-demo-link-here)

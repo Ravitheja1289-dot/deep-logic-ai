@@ -8,6 +8,7 @@ from typing import List, Dict, Any
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 import logging
 
@@ -20,6 +21,15 @@ logger = logging.getLogger(__name__)
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 
 app = FastAPI(title="Invoice QC API", version="1.0.0")
+
+# Allow cross-origin requests so the deployed Streamlit frontend can call this API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # tighten to your Streamlit domain in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health")
