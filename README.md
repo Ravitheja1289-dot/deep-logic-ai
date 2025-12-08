@@ -2,13 +2,14 @@
 
 A production-ready invoice quality control system for B2B PDF invoices with variable layouts. The service extracts invoice data from PDFs using regex heuristics and pdfplumber, then validates extracted data against business rules, format checks, and anomaly detection. It provides both CLI and REST API interfaces for batch processing.
 
-## What I Built
+## ✨ Key Features
 
-- **Extractor Module** (`invoice_qc/extractor.py`): PDF text and table extraction using pdfplumber with regex-based field extraction
-- **Validator Module** (`invoice_qc/validator.py`): Deterministic validation with error tokens for completeness, format, business rules, anomalies, and sanity checks
-- **CLI Interface** (`invoice_qc/cli.py`): Typer-based commands for extract, validate, and full-run workflows
-- **REST API** (`invoice_qc/api.py`): FastAPI endpoints for JSON validation and PDF upload/validation
-- **Regex Patterns** (`invoice_qc/regex_patterns.py`): Robust extraction patterns with named groups for common invoice variants
+- **🚀 Interactive Web App** (`app.py`): A user-friendly Streamlit interface for drag-and-drop extraction and validation.
+- **📄 Extractor Module** (`invoice_qc/extractor.py`): PDF text/table extraction using regex heuristics and pdfplumber.
+- **✅ Validator Module** (`invoice_qc/validator.py`): Deterministic validation rules for completeness, format, and business logic.
+- **🛠 CLI Interface** (`invoice_qc/cli.py`): Command-line tools for batch processing.
+- **🔌 REST API** (`invoice_qc/api.py`): FastAPI endpoints for integration.
+- **🧠 Robust Regex** (`invoice_qc/regex_patterns.py`): Named capture groups for high-precision extraction.
 
 ## Schema & Validation Design
 
@@ -93,20 +94,34 @@ deep-logic-ai/
 └── README.md
 ```
 
-## Setup & Installation
+## Quick Start 🚀
+
+The easiest way to use the system is via the interactive **Streamlit App**.
 
 ```bash
-# Create virtual environment
-python -m venv venv
+# 1. Install dependencies
+pip install -r requirements.txt
 
-# Activate virtual environment
+# 2. Run the App
+streamlit run app.py
+```
+
+The app will open in your browser, allowing you to upload PDFs and see validation results instantly.
+
+## Installation for Developers
+
+If you want to use the CLI or API, follow these steps:
+
+```bash
+# Create and activate virtual environment
+python -m venv venv
 # Windows:
 venv\Scripts\activate
 # Linux/Mac:
 source venv/bin/activate
 
 # Install dependencies
-pip install pdfplumber python-dateutil typer fastapi uvicorn python-multipart
+pip install -r requirements.txt
 ```
 
 ## CLI Usage

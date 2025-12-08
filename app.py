@@ -194,12 +194,22 @@ def render_invoice_table(per_invoice: List[Dict[str, Any]], show_only_invalid: b
             st.markdown("**Extracted Fields:**")
             extracted_data = {k: v for k, v in inv.items() if k not in ['errors', 'is_valid', 'invoice_id', 'line_items', 'raw_text', 'extracted_line_items']}
             if extracted_data:
-                # Display as a clean key-value table
+                # Prepare data for table
+                table_rows = []
                 for key, value in extracted_data.items():
-                    if value is not None:
-                        st.write(f"**{key.replace('_', ' ').title()}:** {value}")
-                    else:
-                        st.write(f"**{key.replace('_', ' ').title()}:** —")
+                    display_key = key.replace('_', ' ').title()
+                    display_value = value if value is not None else "—"
+                    table_rows.append({"Field": display_key, "Value": display_value})
+                
+                st.dataframe(
+                    table_rows,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Field": st.column_config.TextColumn("Field", width="medium"),
+                        "Value": st.column_config.TextColumn("Value", width="large")
+                    }
+                )
             else:
                 st.info("No extracted fields available.")
             
@@ -214,6 +224,9 @@ def render_invoice_table(per_invoice: List[Dict[str, Any]], show_only_invalid: b
 def main():
     st.set_page_config(page_title="Invoice QC Console", layout="wide")
     st.title("Invoice QC Console")
+    
+    # Initialize response_data
+    response_data = None
 
     # Sidebar: Backend configuration
     st.sidebar.header("Configuration")
