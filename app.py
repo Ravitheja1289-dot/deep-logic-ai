@@ -6,9 +6,68 @@ import html
 import os
 from typing import List, Dict, Any
 
+import tempfile
+from pathlib import Path
+
 # Default API URL (change in sidebar if your backend is hosted elsewhere)
 # You can also set an env var STREAMLIT_API_URL in deployment to override.
 DEFAULT_API_URL = os.getenv("STREAMLIT_API_URL", "http://localhost:8000")
+
+
+from invoice_qc.extractor import extract_invoice
+from invoice_qc.validator import validate_batch
+
+# Default to local mode for easier deployment (no separate backend needed)
+DEFAULT_API_URL = "" 
+
+def process_files_locally(files: List[st.runtime.uploaded_file_manager.UploadedFile]) -> Dict[str, Any]:
+    """Process files directly using imported modules (serverless mode)."""
+    extracted_invoices = []
+    
+    for file in files:
+        # Create temp file
+        suffix = Path(file.name).suffix
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+            temp_path = temp_file.name
+            temp_file.write(file.getvalue())
+            
+        try:
+            # Extract
+            invoice_data = extract_invoice(temp_path)
+            extracted_invoices.append(invoice_data)
+        except Exception as e:
+            extracted_invoices.append({
+                'source_file': file.name,
+                'error': f"Extraction failed: {str(e)}"
+            })
+        finally:
+            # Cleanup
+            try:
+                Path(temp_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+                
+    # Validate
+    valid_invoices = [inv for inv in extracted_invoices if 'error' not in inv]
+    if valid_invoices:
+        validation_result = validate_batch(valid_invoices)
+    else:
+        validation_result = {
+            'per_invoice': [],
+            'summary': {
+                'total_invoices': 0, 'valid_count': 0, 'invalid_count': 0, 
+                'error_counts': {}, 'duplicate_groups': 0
+            }
+        }
+        
+    return {
+        'extracted': extracted_invoices,
+        'validation': validation_result
+    }
+
+def process_json_locally(json_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Process JSON directly using imported modules."""
+    return validate_batch(json_data)
 
 
 def send_files_to_api(files: List[st.runtime.uploaded_file_manager.UploadedFile], api_url: str, timeout: int = 60) -> Dict[str, Any]:
@@ -26,6 +85,15 @@ def send_files_to_api(files: List[st.runtime.uploaded_file_manager.UploadedFile]
         )
 
     resp = requests.post(endpoint, files=multipart, timeout=timeout)
+    resp.raise_for_status()
+    resp = requests.post(endpoint, files=multipart, timeout=timeout)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def send_json_to_api(json_data: List[Dict[str, Any]], api_url: str, timeout: int = 60) -> Dict[str, Any]:
+    endpoint = api_url.rstrip("/") + "/validate-json"
+    resp = requests.post(endpoint, json=json_data, timeout=timeout)
     resp.raise_for_status()
     return resp.json()
 
@@ -147,66 +215,78 @@ def main():
     st.set_page_config(page_title="Invoice QC Console", layout="wide")
     st.title("Invoice QC Console")
 
-    # Sidebar: API configuration
-    st.sidebar.header("Backend")
-    api_url = st.sidebar.text_input(
-        "API base URL",
-        value=DEFAULT_API_URL,
-        help="For deployed Streamlit, set this to your public FastAPI URL (not localhost).",
-    )
-    st.sidebar.write("Endpoint used: ", f"`{api_url.rstrip('/')}/extract-and-validate-pdfs`")
-    if "localhost" in api_url:
-        st.sidebar.warning(
-            "Deployed Streamlit cannot reach localhost. Set this to your public FastAPI URL.",
-            icon="⚠️",
-        )
-
-    # Quick health check
-    if st.sidebar.button("Check API health"):
-        try:
-            resp = requests.get(api_url.rstrip("/") + "/health", timeout=10)
-            resp.raise_for_status()
-            st.sidebar.success(f"API OK: {resp.json()}")
-        except Exception as e:
-            st.sidebar.error(f"API health check failed: {e}")
+    # Sidebar: Backend configuration
+    st.sidebar.header("Configuration")
+    st.sidebar.info("Running in **Standalone Mode**. \nNo external backend required.")
     st.sidebar.markdown("---")
     st.sidebar.write("Usage:")
     st.sidebar.markdown("1. Upload PDF invoices\n2. Click **Extract & Validate**\n3. Review results")
 
-    # File uploader
-    uploaded_files = st.file_uploader("Upload invoices", type=["pdf"], accept_multiple_files=True)
+    # Tabs for input method
+    tab1, tab2 = st.tabs(["Upload PDF", "Paste JSON"])
 
-    col_left, col_right = st.columns([3, 1])
-    with col_left:
-        st.write("Select files and click the button to send to the backend for extraction and validation.")
-    with col_right:
-        st.write("")  # spacer
+    with tab1:
+        # File uploader
+        uploaded_files = st.file_uploader("Upload invoices", type=["pdf"], accept_multiple_files=True)
 
-    # Controls row
-    btn_col1, btn_col2 = st.columns([1, 3])
-    with btn_col1:
-        extract_btn = st.button("Extract & Validate")
-    with btn_col2:
-        show_only_invalid = st.checkbox("Show only invalid invoices", value=False)
+        col_left, col_right = st.columns([3, 1])
+        with col_left:
+            st.write("Select files and click the button to extract and validate.")
+        with col_right:
+            st.write("")  # spacer
 
-    response_data = None
+        # Controls row
+        btn_col1, btn_col2 = st.columns([1, 3])
+        with btn_col1:
+            extract_btn = st.button("Extract & Validate")
+        with btn_col2:
+            show_only_invalid = st.checkbox("Show only invalid invoices", value=False)
 
-    if extract_btn:
-        if not uploaded_files:
-            st.warning("Please upload one or more PDF files before clicking Extract & Validate.")
-        else:
-            try:
-                with st.spinner("Uploading files and requesting extraction/validation..."):
-                    response_data = send_files_to_api(uploaded_files, api_url)
-            except requests.RequestException as e:
-                st.error(f"API request failed: {str(e)}")
+        if extract_btn:
+            if not uploaded_files:
+                st.warning("Please upload one or more PDF files before clicking Extract & Validate.")
+            else:
                 try:
-                    if hasattr(e, "response") and e.response is not None:
-                        st.json(e.response.text)
-                except Exception:
-                    pass
-            except Exception as e:
-                st.error(f"Error: {str(e)}")
+                    with st.spinner("Processing files locally..."):
+                        response_data = process_files_locally(uploaded_files)
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
+
+    with tab2:
+        st.write("Paste a list of invoice JSON objects to validate them against the schema rules.")
+        json_input = st.text_area("JSON / List of Invoices", height=300, help="e.g. [{'invoice_number': 'INV-1', ...}]")
+        
+        btn_col_json1, btn_col_json2 = st.columns([1, 3])
+        with btn_col_json1:
+            validate_json_btn = st.button("Validate JSON")
+        with btn_col_json2:
+            show_only_invalid_json = st.checkbox("Show only invalid (JSON)", value=False)
+
+        if validate_json_btn:
+            if not json_input.strip():
+                st.warning("Please paste some JSON.")
+            else:
+                try:
+                    parsed_input = json.loads(json_input)
+                    if isinstance(parsed_input, dict):
+                        parsed_input = [parsed_input]
+                    if not isinstance(parsed_input, list):
+                        st.error("Input must be a JSON object or a list of objects.")
+                    else:
+                        with st.spinner("Validating JSON locally..."):
+                            api_resp = process_json_locally(parsed_input)
+                            
+                            # Normalize response
+                            response_data = {
+                                "extracted": parsed_input,
+                                "validation": api_resp
+                            }
+                            # Update filter checkbox state for this view
+                            show_only_invalid = show_only_invalid_json
+                except json.JSONDecodeError:
+                    st.error("Invalid JSON format.")
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
 
     # If we have response data (either from this run or a previous run), render it
     if response_data:
@@ -243,8 +323,7 @@ def main():
 
     # Helpful footer / troubleshooting
     st.markdown("---")
-    st.markdown("If the API is unreachable, ensure your FastAPI server is running and the URL in the sidebar is correct.")
-    st.markdown("Example local URL: `http://localhost:8000`")
+    st.markdown("If you encounter issues, check the request logs.")
 
 
 if __name__ == "__main__":

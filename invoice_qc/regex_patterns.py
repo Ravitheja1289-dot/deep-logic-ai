@@ -283,6 +283,31 @@ def extract_buyer_name(text: str) -> Optional[str]:
     return None
 
 
+
+# 10. TAX ID (VAT/GST/TIN)
+# Handles: "VAT:", "Tax ID:", "GSTIN:", "UST-IDNr:", "UID:"
+# Common formats:
+# EU VAT: [A-Z]{2}[0-9A-Z]+ (e.g., DE123456789)
+# GST (India): \d{2}[A-Z]{5}\d{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}
+TAX_ID_PATTERN = re.compile(
+    r'(?:vat|tax\s+id|gstin|ust[.\-\s]*id|uid|abn)\s*(?:no\.?|nr\.?|#)?\s*[:]?\s*(?P<tax_id>[A-Z0-9\-\.\s]{8,20})',
+    re.IGNORECASE
+)
+
+def extract_tax_id(text: str) -> Optional[str]:
+    """Extract Tax ID (VAT/GST/TIN) from text."""
+    # Try pattern-based extraction
+    match = TAX_ID_PATTERN.search(text)
+    if match:
+        tax_id = match.group('tax_id').strip()
+        # Clean up: remove extra whitespace
+        tax_id = re.sub(r'\s+', '', tax_id)
+        # Basic validation: must have at least some digits and be of reasonable length
+        if len(tax_id) >= 8 and any(c.isdigit() for c in tax_id):
+            return tax_id
+    return None
+
+
 def _normalize_date_string(date_str: str) -> Optional[str]:
     """Normalize date string to YYYY-MM-DD format."""
     if not date_str:
@@ -346,7 +371,7 @@ def _normalize_date_string(date_str: str) -> Optional[str]:
     return date_str
 
 
-# Example usage with all patterns:
+
 def extract_all_fields(text: str) -> dict:
     """Extract all invoice fields using the robust patterns."""
     return {
@@ -359,6 +384,5 @@ def extract_all_fields(text: str) -> dict:
         'gross_total': extract_gross_total(text),
         'seller_name': extract_seller_name(text),
         'buyer_name': extract_buyer_name(text),
+        'supplier_tax_id': extract_tax_id(text),
     }
-
-

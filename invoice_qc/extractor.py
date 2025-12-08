@@ -326,6 +326,8 @@ def extract_invoice(path: str) -> Dict[str, Any]:
             'gross_total': _extract_amount(raw_text, 'total') or _extract_amount(raw_text, 'grand total') or _extract_amount(raw_text, 'amount due'),
             'seller_name': _extract_name(raw_text, 'seller') or _extract_name(raw_text, 'from') or _extract_name(raw_text, 'supplier') or _extract_name(raw_text, 'vendor'),
             'buyer_name': _extract_name(raw_text, 'buyer') or _extract_name(raw_text, 'to') or _extract_name(raw_text, 'bill to') or _extract_name(raw_text, 'customer'),
+            'supplier_tax_id': regex_patterns.extract_tax_id(raw_text),
+            'buyer_tax_id': None,  # Simplified: assume main tax ID found is supplier's
         }
     fields['line_items'] = _extract_line_items(path)
     fields['raw_text'] = raw_text
